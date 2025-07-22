@@ -1,5 +1,5 @@
 # Three.js DEM viewer
-A simple three.js app for viewing digital elevation models (DEM) in the browser. Purely vibe-coded, some controls not working properly atm. Basic functions do work. Texture is missing. 
+A simple three.js app for viewing digital elevation models (DEM) in the browser. Purely vibe-coded, some controls not working properly atm. Basic functions do work.
 Created this as simple alternative to Aerialod which is unfortunately only available for Windows.
 
 ## APP: https://do-me.github.io/threejs-dem-viewer/
