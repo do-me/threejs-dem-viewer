@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>Enhanced 3D Heightmap with Dynamic Slicing</title>
+    <title>Enhanced 3D Heightmap with DEM and Texture</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1">
     <style>
@@ -12,6 +12,7 @@
             margin: 0;
             overflow: hidden;
         }
+
         #upload-container {
             position: absolute;
             top: 10px;
@@ -23,9 +24,11 @@
             border-radius: 5px;
             border: 1px solid #555;
         }
+
         input[type="file"] {
             display: none;
         }
+
         label.file-upload-button {
             cursor: pointer;
             padding: 8px 12px;
@@ -33,7 +36,9 @@
             border: 1px solid #777;
             border-radius: 3px;
             font-size: 14px;
+            margin-right: 5px;
         }
+
         label.file-upload-button:hover {
             background-color: #555;
         }
@@ -42,11 +47,12 @@
 
 <body>
     <div id="upload-container">
-        <label for="file-input" class="file-upload-button">Upload Heightmap Image (PNG, JPG)</label>
-        <input type="file" id="file-input" accept="image/png, image/jpeg, image/tiff">
+        <label for="dem-input" class="file-upload-button">Upload Heightmap (DEM)</label>
+        <input type="file" id="dem-input" accept="image/png, image/jpeg, image/tiff">
+        <label for="texture-input" class="file-upload-button">Upload Texture (Color)</label>
+        <input type="file" id="texture-input" accept="image/png, image/jpeg">
     </div>
 
-    <!-- Import maps for three.js modules -->
     <script type="importmap">
         {
             "imports": {
@@ -62,44 +68,44 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { GUI } from 'dat.gui';
 
-        // --- Scene Globals ---
         let scene, camera, renderer, controls;
         let planeMesh;
-        let directionalLight, hemisphereLight;
-        let dLightHelper; 
-        
-        // Slicing planes
+        let directionalLight, hemisphereLight, dLightHelper;
+
+        let currentTexture = null;  // DEM (heightmap)
+        let colorTexture = null;    // Texture (color)
+
         const slicePlanes = [
             new THREE.Plane(new THREE.Vector3(1, 0, 0), 100),
             new THREE.Plane(new THREE.Vector3(-1, 0, 0), 100),
             new THREE.Plane(new THREE.Vector3(0, 0, 1), 100),
             new THREE.Plane(new THREE.Vector3(0, 0, -1), 100)
         ];
-        
+
         const settings = {
-            // Model
             extrusion: 45,
             lod: 256,
             color: '#c7c7c7',
             wireframe: false,
-            // Hemisphere Light
+            showTexture: false,
             skyColor: '#cdeeff',
             groundColor: '#4d4d4d',
             hemisphereIntensity: 0.6,
-            // Directional Light (Sun)
             dLightColor: '#ffffff',
             dLightIntensity: 1.2,
             dLightX: 120,
             dLightY: 150,
             dLightZ: 80,
             showDLightHelper: false,
-            // Slicing
             sliceX: 100,
             sliceNegativeX: 100,
             sliceZ: 100,
             sliceNegativeZ: 100,
             enableSlicing: false
         };
+
+        const defaultHeightmapUrl = 'mont_blanc_small.jpeg';
+        const defaultTextureUrl = 'lavatile.jpg';
 
         function init() {
             scene = new THREE.Scene();
@@ -111,7 +117,7 @@
             renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.shadowMap.enabled = true;
-            renderer.shadowMap.type = THREE.PCFSoftShadowMap; 
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             renderer.clippingPlanes = slicePlanes;
             document.body.appendChild(renderer.domElement);
 
@@ -121,11 +127,24 @@
             controls.enableDamping = true;
 
             window.addEventListener('resize', onWindowResize, false);
-            document.getElementById('file-input').addEventListener('change', handleFileSelect, false);
-            
+            document.getElementById('dem-input').addEventListener('change', handleDEMSelect, false);
+            document.getElementById('texture-input').addEventListener('change', handleTextureSelect, false);
+
             setupGUI();
-            
+            loadDefaultTerrain();
+
             animate();
+        }
+
+        function loadDefaultTerrain() {
+            const loader = new THREE.TextureLoader();
+            loader.load(defaultHeightmapUrl, function(tex) {
+                currentTexture = tex;
+                loader.load(defaultTextureUrl, function(colorTex) {
+                    colorTexture = colorTex;
+                    createTerrain();
+                });
+            });
         }
 
         function setupLights() {
@@ -136,16 +155,16 @@
             directionalLight.position.set(settings.dLightX, settings.dLightY, settings.dLightZ);
             directionalLight.castShadow = true;
 
-            const shadowCamSize = 200; 
+            const shadowCamSize = 200;
             directionalLight.shadow.camera.left = -shadowCamSize;
             directionalLight.shadow.camera.right = shadowCamSize;
             directionalLight.shadow.camera.top = shadowCamSize;
             directionalLight.shadow.camera.bottom = -shadowCamSize;
             directionalLight.shadow.camera.near = 0.5;
             directionalLight.shadow.camera.far = 500;
-
             directionalLight.shadow.mapSize.width = 2048;
             directionalLight.shadow.mapSize.height = 2048;
+
             scene.add(directionalLight);
 
             dLightHelper = new THREE.DirectionalLightHelper(directionalLight, 10);
@@ -153,21 +172,27 @@
             scene.add(dLightHelper);
         }
 
-        function createTerrain(texture) {
+        function createTerrain() {
+            if (!currentTexture) return;
+
             if (planeMesh) {
                 scene.remove(planeMesh);
                 planeMesh.geometry.dispose();
                 planeMesh.material.dispose();
             }
 
+            currentTexture.wrapS = currentTexture.wrapT = THREE.RepeatWrapping;
+            if (colorTexture) colorTexture.wrapS = colorTexture.wrapT = THREE.RepeatWrapping;
+
             const geometry = new THREE.PlaneGeometry(200, 200, settings.lod, settings.lod);
-            
+
             const material = new THREE.MeshStandardMaterial({
                 color: settings.color,
+                map: settings.showTexture ? colorTexture : null,
                 metalness: 0.2,
                 roughness: 0.8,
                 wireframe: settings.wireframe,
-                displacementMap: texture,
+                displacementMap: currentTexture,
                 displacementScale: settings.extrusion,
                 clippingPlanes: slicePlanes,
                 clipShadows: true
@@ -180,18 +205,63 @@
             scene.add(planeMesh);
         }
 
+        function handleDEMSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const textureLoader = new THREE.TextureLoader();
+                textureLoader.load(e.target.result, function(texture) {
+                    currentTexture = texture;
+                    createTerrain();
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function handleTextureSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const textureLoader = new THREE.TextureLoader();
+                textureLoader.load(e.target.result, function(texture) {
+                    colorTexture = texture;
+                    if (planeMesh && settings.showTexture) {
+                        planeMesh.material.map = colorTexture;
+                        planeMesh.material.needsUpdate = true;
+                    }
+                });
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
         function setupGUI() {
             const gui = new GUI();
 
             const modelFolder = gui.addFolder('Terrain Model');
+            modelFolder.add(settings, 'showTexture').name('Show Texture').onChange(v => {
+                if (planeMesh) {
+                    planeMesh.material.map = v ? colorTexture : null;
+                    planeMesh.material.needsUpdate = true;
+                }
+            });
             modelFolder.add(settings, 'extrusion', 0, 100, 1).name('Extrusion').onChange(v => {
                 if (planeMesh) planeMesh.material.displacementScale = v;
             });
             modelFolder.add(settings, 'lod', 32, 512, 32).name('Level of Detail').onFinishChange(() => {
-                 if (planeMesh) createTerrain(planeMesh.material.displacementMap);
+                createTerrain();
             });
             modelFolder.addColor(settings, 'color').name('Color').onChange(v => {
-                if(planeMesh) planeMesh.material.color.set(v);
+                if (planeMesh) planeMesh.material.color.set(v);
             });
             modelFolder.add(settings, 'wireframe').name('Wireframe').onChange(v => {
                 if (planeMesh) planeMesh.material.wireframe = v;
@@ -211,7 +281,6 @@
             sunFolder.add(settings, 'dLightY', 0, 400, 5).name('Position Y').onChange(v => directionalLight.position.y = v);
             sunFolder.add(settings, 'dLightZ', -200, 200, 5).name('Position Z').onChange(v => directionalLight.position.z = v);
             sunFolder.add(settings, 'showDLightHelper').name('Show Helper').onChange(v => dLightHelper.visible = v);
-            
             lightFolder.open();
 
             const slicingFolder = gui.addFolder('Slicing');
@@ -233,33 +302,10 @@
             slicingFolder.open();
         }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        function handleFileSelect(event) {
-            const file = event.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const textureLoader = new THREE.TextureLoader();
-                    textureLoader.load(e.target.result, function(texture) {
-                        createTerrain(texture);
-                        document.getElementById('upload-container').style.display = 'none';
-                    });
-                };
-                reader.readAsDataURL(file);
-            }
-        }
-
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
-            
-            if(dLightHelper.visible) dLightHelper.update();
-            
+            if (dLightHelper.visible) dLightHelper.update();
             renderer.render(scene, camera);
         }
 
